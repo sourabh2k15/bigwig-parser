@@ -60,15 +60,14 @@ BigWig.prototype.process = function(data){
 	console.log("processing R tree !!!!!!!");
 	this.readRTreeIndex(); // gets root node index after processing header, it is always 48 after R-tree indexOffset
 	this.root = this.getRTreeNode();
-	console.log(this);
-	var blocks = this.getValues("chr21",25357722, 25403865);
+	return this.cb(this);
 }
 
-BigWig.prototype.getValues = function(chrom, start, end){
+BigWig.prototype.getValues = function(chrom, start, end,cb){
+	this.cb2 = cb;
 	var chromid = this.chroms.indexOf(chrom);
 	var blocks  = this.walkRTreeNodes(this.root,chromid,start,end);
 	this.processBlocks(blocks,chromid,start,end);
-	return blocks;
 }
 
 BigWig.prototype.processBlocks = function(blocks,chromid,ostart,oend){
@@ -86,7 +85,6 @@ BigWig.prototype.processBlocks = function(blocks,chromid,ostart,oend){
 			var b = data.slice(blocks.offset[i]-base,sb)
 
 			if(this.compressed){
-				console.log("need to uncompress buffer first");
 				b = jszlib_inflate_buffer(b,2,blocks.size[i]-2);
 			}
 
@@ -103,33 +101,33 @@ BigWig.prototype.processBlocks = function(blocks,chromid,ostart,oend){
 			var ranges = this.readValues(type,nItems,blocks,ba,fa,span,ostart,oend);
 			values = values.concat(ranges);
 		}
-		console.log(values);
-		return values;
+		return this.cb2(values);
 	});
 }
 
 BigWig.prototype.readValues = function(blocktype,items,blocks,ba,fa,span,ostart,oend){
 	var values = [];
 	if(this.type=="bigwig"){
-		switch(blocktype){
-			case BIG_WIG_TYPE_FSTEP:
+		console.log("processing bigwig");
+
+		for(var i=0;i<items;i++){
+			if(blocktype==BIG_WIG_TYPE_VSTEP){
+				var s = read32Bit(ba,24+2*i)+1;
+				var e = s+span-1;
+				var v = readfloat(fa,7+2*i);
+				//console.log(s,v);
+				if(s>oend || e<ostart) continue;
+				values.push([s,e,v]);
+			}
+			else if(blocktype==BIG_WIG_TYPE_FSTEP){
 				console.log("fixed step");
-				break;
-			case BIG_WIG_TYPE_VSTEP:
-				console.log("v step");
-				for(var i=0;i<items;i++){
-					var s = read32Bit(ba,24+2*i)+1;
-					var e = s+span-1;
-					var v = readfloat(fa,7+2*i);
-					//console.log(s,v);
-					if((s<=oend && e>=ostart)) values.push([s,e,v]);
-				}
-				break;
-			case BIG_WIG_TYPE_GRAPH:
+			}
+			else if(blocktype==BIG_WIG_TYPE_GRAPH){
 				console.log("graph");
-				break;
-			default:
-				break;
+			}
+			else{
+				console.log("blocktype not recognized");
+			}
 		}
 	}
 	else if(this.type=="bigbed"){
@@ -173,22 +171,8 @@ BigWig.prototype.overlapsNonLeaf = function(node,chromid,start,end){
 			nodeBlocks = this.overlapsNonLeaf(node.x.child[i],chromid,start,end);
 		}
 		output = this.mergeBlocks(output,nodeBlocks);
-		return output;
 	}
-}
-
-BigWig.prototype.mergeBlocks = function(o1,o2){
-	//console.log(o1,o2);
-	if(!o2) return o1;
-	if(!o1.n) return o2;
-	if(!o2.n) return o1;
-	var j = o1.n;
-	o1.n += o2.n;
-	for(var i=0;i<o2.n;i++){
-		o1.offset[j+i] = o2.offset[i];
-		o1.size[j+i] = o2.size[i];
-	}
-	return o1;
+	return output;
 }
 
 BigWig.prototype.overlapsLeaf = function(node,chromid,start,end){
@@ -225,6 +209,20 @@ BigWig.prototype.overlapsLeaf = function(node,chromid,start,end){
 	output.offset = offset;
 	output.size = size;
 	return output;
+}
+
+BigWig.prototype.mergeBlocks = function(o1,o2){
+	//console.log(o1,o2);
+	if(!o2) return o1;
+	if(!o1.n) return o2;
+	if(!o2.n) return o1;
+	var j = o1.n;
+	o1.n += o2.n;
+	for(var i=0;i<o2.n;i++){
+		o1.offset[j+i] = o2.offset[i];
+		o1.size[j+i] = o2.size[i];
+	}
+	return o1;
 }
 
 BigWig.prototype.parseData = function(data){
@@ -282,9 +280,10 @@ BigWig.prototype.readHeader = function(header,t){
 	t.zoomHeaders = [];
 
 	for(var i=0;i<t.zoomLevels;i++){
-		var zReduction = t.read32Bit(6*i+16);
-		var zdOffset   = t.read64Bit(24*i+72);
-		var zIOffset    = t.read64Bit(24*i+80);
+		var zReduction = t.read32Bit();
+		t.read32Bit(); // reserved
+		var zdOffset    = t.read64Bit();
+		var zIOffset    = t.read64Bit();
 		t.zoomHeaders.push({reductionLevel :zReduction, dataOffset:zdOffset, indexOffset:zIOffset});
 	}
 }
