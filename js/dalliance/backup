@@ -1,0 +1,553 @@
+var BigWig = function(f, name, remote, callback){
+	// constants : bigwig/bigbed file header signatures (magic numbers) (32 bit) , can be swapped ( big-endian | BE )
+	var BIG_WIG_MAGIC = 0x888FFC26;
+	var BIG_WIG_MAGIC_BE = 0x26FC8F88;
+
+	var BIG_BED_MAGIC = 0x8789F2EB;
+	var BIG_BED_MAGIC_BE = 0xEBF28987;
+
+	var CIRTREE_MAGIC = 0x78ca8c91;
+	var IDXTREE_MAGIC = 0x2468ace0;
+
+	//type of file converted to bigwig bedgraph |variable step wiggle | fixed step wiggle
+	var BIG_WIG_TYPE_GRAPH = 1;
+	var BIG_WIG_TYPE_VSTEP = 2;
+	var BIG_WIG_TYPE_FSTEP = 3;
+
+	//bigbed data color regex
+	var BED_COLOR_REGEXP = new RegExp("^[0-9]+,[0-9]+,[0-9]+");
+
+	var M1 = 1<<8;
+	var M2 = M1<<8;
+	var M3 = M2<<8;
+	var M4 = M3<<8;
+	var M5 = M4<<8;
+	var M6 = M5<<8;
+	var M7 = M6<<8;
+
+	var data;
+	var pos = -1;
+	var latest_start = 0;
+	var latest_length = 0;
+	var error;
+	var ba, la, fa;
+	var bbi = {};
+
+	function init(){
+		//initialize object
+		if(remote) data = new URLFetchable(f);
+		else data = new dataHolder(f);
+
+		checkSignature();
+	}
+
+	function getData(start, length, cb){
+		data.slice(start,length).fetch(function(d){
+			ba = new Uint8Array(d);
+			latest_start = start;
+			latest_length = length;
+			pos = 0;
+			cb();
+		});
+	}
+
+	function checkSignature(){
+		//read first 4 bytes to check signature
+		getData(0,4,function(){
+			var magic = read32Bit();
+
+			if(magic == BIG_WIG_MAGIC) bbi.type = "bigwig";
+			else if(magic == BIG_BED_MAGIC) bbi.type= "bigbed";
+			else if(magic == BIG_WIG_MAGIC_BE || magic == BIG_BED_MAGIC_BE){
+				error = "big-endian files not supported yet!";
+			}else{
+				error = "unsupported file format";
+			}
+		});
+		error ? callback(null,error) : readHeader();
+	}
+
+	function readHeader(){
+		getData(4,200,function(){
+			bbi.version = read16Bit();
+			bbi.numZoomLevels = read16Bit();
+			bbi.chromTreeOffset = read64Bit();
+			bbi.unzoomedDataOffset = read64Bit();
+			bbi.unzoomedIndexOffset = read64Bit();
+
+			// useful for bigbed files only, 0 for bigwig
+			bbi.fieldCount = read16Bit();
+			bbi.definedFieldCount = read16Bit();
+			bbi.asOffset = read64Bit();
+
+			bbi.totalSummaryOffset = read64Bit();
+			bbi.uncompressBufSize = read32Bit();
+			bbi.extHeaderOffset = read64Bit();
+			bbi.zoomHeaders = new Array(bbi.numZoomLevels);
+
+			if(bbi.uncompressBufSize>0) bbi.compressed = true;
+			if(bbi.totalSummaryOffset>0) bbi.summary = true;
+			if(bbi.asOffset>0) bbi.autoSQL = true;
+			if(bbi.extHeaderOffset>0) bbi.extHeader = true;
+
+			readZoomHeaders();
+		});
+	}
+
+	function readZoomHeaders(){
+		for(var i=0; i < bbi.numZoomLevels; i++){
+			var reduction = read32Bit();
+			read32Bit(); // reserved
+			var dataOffset    = read64Bit();
+			var indexOffset    = read64Bit();
+			bbi.zoomHeaders[i] = {reductionLevel :reduction, dataOffset:dataOffset, indexOffset:indexOffset};
+		}
+		readChromTree();
+	}
+
+	//reading B+ tree which maps chrom names to ids used in R-tree
+	function readChromTree(){
+		log("fetching chrom ids");
+		var len = bbi.unzoomedDataOffset - bbi.chromTreeOffset;
+
+		//reading chrom tree header
+		getData(bbi.chromTreeOffset,len,function(){
+			var magic = read32Bit();
+
+			if(magic == CIRTREE_MAGIC){
+				bbi.bpTree = {};
+				bbi.bpTree.itemsPerBlock = read32Bit();
+				bbi.bpTree.keySize = read32Bit();
+				bbi.bpTree.valueSize = read32Bit();
+				bbi.bpTree.itemCount = read64Bit();
+
+				seek(pos+8); // 8 bytes of padding after B+ tree header
+
+				bbi.chroms = new Array(bbi.bpTree.itemCount);
+				bbi.lengths = new Array(bbi.bpTree.itemCount);
+			}
+			else error = "chromosome id B+ tree not found!";
+
+			error ? callback(null,error) : readChromBlocks();
+			readRTreeIndex();
+		});
+	}
+
+	function readChromBlocks(){
+		var isLeaf = read8Bit();
+		read8Bit(); //padding
+
+		if(isLeaf) return readChromTreeLeaf();
+		else return readChromTreeNonLeaf();
+	}
+
+	// In all of the files I have tested with I have never seen a non leaf node in B+ tree and even the libBigWig
+	// author says so. This part of code is never used in action actually :(
+	function readChromTreeNonLeaf(){
+		var rv = 0;
+		var children = read16Bit();
+
+		log("index node");
+		seek(pos+bbi.bpTree.keySize);
+
+		while(children>0){
+			children--;
+			var childOffset = read64Bit();
+			seek(childOffset-latest_start);
+			rv += readChromBlocks();
+		}
+		return rv;
+	}
+
+	function readChromTreeLeaf(){
+		log("leaf node");
+		var children = read16Bit();
+		var counter = children;
+
+		while(counter>0){
+			counter--;
+			var chrom = "";
+
+			for(var j=0;j<bbi.bpTree.keySize;j++){
+				var c = read8Bit();
+				if(c!=0) chrom += String.fromCharCode(c);
+			}
+
+			var idx = read32Bit();
+			var len = read32Bit();
+			bbi.chroms[idx] = chrom;
+			bbi.lengths[idx] = len;
+		}
+
+		return children;
+	}
+
+	function readAutoSQL(){
+		if(bbi.asOffset==0){console.log("no autoSQL present!");}
+		else{
+			log("autoSQL present!, need to parse");
+		}
+	}
+
+	function readRTreeIndex(){
+		log("parsing R tree index");
+		getData(bbi.unzoomedIndexOffset,48,function(){
+			var magic = read32Bit();
+
+			if(magic==IDXTREE_MAGIC){
+				log("R tree found");
+				bbi.Rheader = readRTreeHeader();
+				bbi.rootOffset = pos+latest_start;
+
+				getRTreeNode(bbi.rootOffset)
+				.then( (node) => {
+					bbi.root = node;
+					bbi.getValues = getValues;
+					callback(bbi);
+				});
+
+			}else{
+				callback(null,"R-tree not found!");
+			}
+		});
+	}
+
+	function readRTreeHeader(){
+		var Rheader = {};
+		Rheader.blockSize = read32Bit();
+		Rheader.nItems = read64Bit();
+		Rheader.chrIdxStart = read32Bit();
+		Rheader.baseStart = read32Bit();
+		Rheader.chrIdxEnd = read32Bit();
+		Rheader.baseEnd = read32Bit();
+		Rheader.endFileOffset = read64Bit();
+		Rheader.nItemsPerSlot = read32Bit();
+
+		read32Bit(); // padding
+		return Rheader;
+	}
+
+	function getRTreeNode(offset){
+		var p = new Promise(function(resolve,reject){
+			getRNodeInfo(offset,resolve,reject);
+		});
+		return p;
+	}
+
+	function getRNodeInfo(offset,resolve,reject){
+		getData(offset,32,function(){
+			var node = {};
+			node.isLeaf = read8Bit();
+			read8Bit(); // reserved;
+			node.children = read16Bit();
+			node.chrIdxStart = new Array(node.children);
+			node.baseStart = new Array(node.children);
+			node.chrIdxEnd = new Array(node.children);
+			node.baseEnd = new Array(node.children);
+			node.dataOffset = new Array(node.children);
+			node.x = {};
+
+			if(node.isLeaf){
+				node.x.size = new Array(node.nChildren);
+			} else {
+				node.x.child = new Array(node.nChildren);
+			}
+
+			getRNodeChildren(node,resolve,reject);
+		});
+	}
+
+	function getRNodeChildren(node,resolve,reject){
+		getData(latest_start+pos,node.children*32,function(){
+			for(var i=0;i<node.children;i++){
+				node.chrIdxStart[i] = read32Bit();
+				node.baseStart[i] = read32Bit();
+				node.chrIdxEnd[i] = read32Bit();
+				node.baseEnd[i] = read32Bit();
+				node.dataOffset[i] = read64Bit();
+
+				if(node.isLeaf){
+					node.x.size[i] = read64Bit();
+				}
+			}
+			resolve(node);
+		});
+	}
+
+	function getValues(chrom, start, end, cb){
+		bbi.blocks = [];
+		var chromid = bbi.chroms.indexOf(chrom);
+		walkRTreeNodes(bbi.root,chromid,start,end).then( () => {
+			console.log(bbi.blocks);
+			getBlocks(chromid,start,end,cb);
+		});
+	}
+
+	function walkRTreeNodes(root,chromid,start,end){
+		var p = new Promise(function(resolve,reject){
+			if(root.isLeaf){
+				 overlapsLeaf(root,chromid,start,end);
+				 resolve();
+			}
+			else overlapsNonLeaf(root,chromid,start,end,resolve,reject);
+		});
+		return p;
+	}
+
+	function overlapsLeaf(node,chromid,start,end){
+		console.log('leaf');
+		var output = [];
+		var overlaps = findOverlap(node,chromid,start,end);
+
+		for(var i=0;i<overlaps.length;i++){
+			output.push({offset : node.dataOffset[overlaps[i]], size : node.x.size[overlaps[i]]});
+		}
+		bbi.blocks = mergeBlocks(bbi.blocks,output);
+	}
+
+	function overlapsNonLeaf(node,chromid,start,end,resolve,reject){
+		var blocks = [];
+		new Promise(function(resolve2, reject2){
+			console.log("index");
+			var intermediateBlocks = [];
+			var overlaps = findOverlap(node,chromid,start,end);
+
+			//fetching children from file async
+			(function loop(i){
+				if(i<overlaps.length){
+					new Promise(function(resolve3,reject3){
+						if(!node.x.child[overlaps[i]]){
+							getRTreeNode(node.dataOffset[overlaps[i]])
+							.then( (n) => {
+								node.x.child[overlaps[i]] = n;
+								resolve3();
+							});
+						}
+					}).then( loop.bind(null,i+1) );
+				}
+				else{
+					resolve2(overlaps);
+				}
+			})(0);
+
+		}).then(function(overlaps){
+			console.log("children summoned!");
+			for(var i=0;i<overlaps.length;i++){
+				if(node.x.child[overlaps[i]].isLeaf){
+					console.log("leaf");
+					overlapsLeaf(node.x.child[overlaps[i]],chromid,start,end);
+					resolve();
+				}
+				else{
+					console.log("index");
+					overlapsNonLeaf(chromid,start,end,resolve,reject)
+					.then( () => { resolve();} );
+				}
+			}
+		});
+	}
+
+	function findOverlap(node,chromid,start,end){
+		var overlaps = [];
+
+		for(var i=0;i<node.children;i++){
+			if(chromid < node.chrIdxStart[i]) break;
+			if(chromid > node.chrIdxEnd[i]) continue;
+			if(node.chrIdxStart[i] != node.chrIdxEnd[i]){
+				if(chromid==node.chrIdxStart[i]){
+					if(node.baseStart[i]>=end) break;
+				}
+				else if(chromid==node.chrIdxEnd[i]){
+					if(node.baseEnd[i]<=start) continue;
+				}
+			}
+			else{
+				if( start > node.baseEnd[i] || end <node.baseStart[i]) continue;
+			}
+			overlaps.push(i);
+		}
+
+		return overlaps;
+	}
+
+	function mergeBlocks(o1,o2){
+		o1 = o1.concat(o2);
+		return o1;
+	}
+
+	function getBlocks(chromid, ostart, oend, cb){
+		console.log("get blocks");
+		if(!bbi.blocks || bbi.blocks.length == 0){
+			 console.log("no records for given range");
+			 return;
+		}
+		var blocks = bbi.blocks;
+		var totalSize = blocks.reduce(function(a,b){ return a+b.size; },0)
+		var base = blocks[0].offset;
+		var values = [];
+
+		getData(base,totalSize,function(){
+			var b = ba.buffer; // arraybuffer containing all blocks fetched at once to save network requests
+			if(bbi.compressed) log("compressed");
+
+			for(var i=0;i<blocks.length;i++){
+				//individual block sliced and used
+				var virtualOffset = blocks[i].offset-base;
+				var size = blocks[i].size;
+
+				var bi = b.slice(virtualOffset,virtualOffset + size);
+				if(bbi.compressed){
+					 bi = jszlib_inflate_buffer(bi,2,blocks[i].size-2);
+				}
+				ba = new Uint8Array(bi);
+
+				pos = 0;
+				values = values.concat(processBlocks(chromid,ostart,oend));
+			}
+			cb(values);
+		});
+	}
+
+	function readBlockHeader(){
+		blockHdr = {};
+		blockHdr.chromid = read32Bit();
+		blockHdr.blockstart = read32Bit();
+		blockHdr.blockend = read32Bit();
+		blockHdr.step = read32Bit();
+		blockHdr.span = read32Bit();
+		blockHdr.type = read8Bit();
+		read8Bit(); // padding
+		blockHdr.nItems = read16Bit();
+		return blockHdr;
+	}
+
+	function processBlocks(chromid, ostart, oend){
+		var values = [];
+		log('processBlocks '+bbi.type);
+
+		if(bbi.type = "bigwig"){
+			var blockHdr = readBlockHeader();
+			if(blockHdr.type == BIG_WIG_TYPE_FSTEP){
+				console.log("fixed step");
+				for(var j = 0; j < blockHdr.nItems; j++){
+					seek(pos+24);
+					var score = readFloat();
+					var start = blockHdr.blockstart + j*blockHdr.step + 1;
+					var end = start + blockHdr.span - 1;
+					if(start <= oend && end >= ostart && blockHdr.chromid == chromid) values.push([start,end,score]);
+				}
+			}
+			else if(blockHdr.type == BIG_WIG_TYPE_VSTEP){
+				for(var j = 0; j < blockHdr.nItems; j++){
+					seek(j*8+24);
+
+					var start = read32Bit() + 1;
+					var end = start + blockHdr.span - 1;
+					var score = readFloat(j*8 + 28);
+					seek(pos + 4);
+					console.log(start,end,score);
+					if(start <= oend && end >= ostart && blockHdr.chromid == chromid) values.push([start,end,score]);
+				}
+			}else if(blockHdr.type==BIG_WIG_TYPE_GRAPH){
+				console.log("graph");
+				for(var j = 0; j < blockHdr.nItems; j++){
+					seek(j*12+24)
+					var start = read32Bit() +1;
+					var end = read32Bit();
+					var score = readFloat((j*12)+32);
+					seek(pos+4);
+					if(start > end) start = end;
+					if(start <= oend && end >= ostart && blockHdr.chromid==chrid) values.push([start,end,score]);
+				}
+			}
+			return values;
+		}else if(bbi.type = "bigbed"){
+			console.log("bigbed");
+		}else{
+			log("unsupported");
+		}
+	}
+
+	function show64Bit(o){
+		console.log(ba[o],ba[o+1],ba[o+2],ba[o+3],ba[o+4],ba[o+5],ba[o+6],ba[o+7]);
+	}
+
+	//reads 8 bytes from data
+	function read64Bit(){
+			var o = pos;
+			var val = ba[o] + ba[o+1]*M1 + ba[o+2]*M2 + ba[o+3]*M3 + ba[o+4]*M4 + ba[o+5]*M5 + ba[o+6]*M6 + ba[o+7]*M7;
+			pos = o+8;
+		    return val;
+	}
+
+	function readFloat(o){
+		var a = new Uint8Array([ba[o],ba[o+1],ba[o+2],ba[o+3]]);
+		var b = a.buffer;
+		var c = new Float32Array(b);
+		return c[0];
+	}
+	//reads 4bytes from data
+	function read32Bit(){
+		var o = pos;
+		pos = o+4;
+		var a = ba[o], b = ba[o+1],c=ba[o+2],d= ba[o+3];
+		var r = (a | ((b<<8)>>>0) | ((c<<16)>>>0) | ((d<<24)>>>0))>>>0;
+		return r;
+	}
+
+	//reads 2 bytes from data
+	function read16Bit(){
+		var o = pos;
+		pos = o+2;
+		return (ba[o])|(ba[o+1]<<8);
+	}
+
+	//reads 1 byte from data
+	function read8Bit(){
+		return ba[pos++];
+	}
+
+	// sets the data cursor to point to p
+	function seek(p){
+		pos = p;
+	}
+
+	init();
+}
+
+function log(a){
+	console.log(a);
+}
+
+$(document).ready(function(){
+	function checkURL(){
+		//http://ftp.ebi.ac.uk/pub/databases/blueprint/data/homo_sapiens/GRCh38/bone_marrow/15548/Multiple_Myeloma/Bisulfite-Seq/CNAG/S00XDKU1.CPG_methylation_calls.bs_call.GRCh38.20160531.bw
+		var url = "http://ftp.ebi.ac.uk/pub/databases/blueprint/data/homo_sapiens/GRCh38/bone_marrow/15548/Multiple_Myeloma/Bisulfite-Seq/CNAG/S00XDKU1.CPG_methylation_calls.bs_call.GRCh38.20160531.bw";
+		new BigWig(url,"mytrack", true, function(d,err){
+			if(!d) console.log(err);
+			else{
+				console.log(d);
+				d.getValues("chr2", 25417191, 25420191, function(d){
+					console.log(d);
+				});
+			}
+		});
+	}
+
+	//checkURL();
+	//"chr21",25357722, 25403865
+	$('#f').change(function(){
+		file = this.files[0];
+		if(!file) return;
+
+		new BigWig(file, "mytrack", false, function(bbi,err){
+			if(!bbi) console.log(err);
+			else{
+				 console.log(bbi);
+				 bbi.getValues("chr2", 25417191, 25420191, function(d){
+					 console.log(d);
+				 });
+			}
+		});
+	});
+});

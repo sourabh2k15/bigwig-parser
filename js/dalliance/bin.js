@@ -1,34 +1,40 @@
-function dataHolder(b){
-	this.blob = b;
+function BlobFetchable(b) {
+    this.blob = b;
 }
 
-dataHolder.prototype.salted = function(){ return this;}
+BlobFetchable.prototype.slice = function(start, length) {
+    var b;
 
-dataHolder.prototype.slice = function(start,length){
-	var b;
-
-	if(this.blob.slice){
-		if(length){
-			b = this.blob.slice(start,start+length);
-		}
-		else b = this.blob.slice(start);
-	}
-	else{
-		log("blob doesn't have slice prop");
-	}
-
-	return new dataHolder(b);
+    if (this.blob.slice) {
+        if (length) {
+            b = this.blob.slice(start, start + length);
+        } else {
+            b = this.blob.slice(start);
+        }
+    } else {
+        if (length) {
+            b = this.blob.webkitSlice(start, start + length);
+        } else {
+            b = this.blob.webkitSlice(start);
+        }
+    }
+    return new BlobFetchable(b);
 }
 
-dataHolder.prototype.fetch = function(cb1){
-	var r = new FileReader;
-	r.onloadend = function(){
-		cb1(r.result);
-	}
-	r.readAsArrayBuffer(this.blob);
-}
+BlobFetchable.prototype.salted = function() {return this;}
 
-// URL fetchable
+if (typeof(FileReader) !== 'undefined') {
+    BlobFetchable.prototype.fetch = function(callback) {
+        var reader = new FileReader();
+        reader.onloadend = function(ev) {
+            callback(reader.result);
+        };
+        reader.readAsArrayBuffer(this.blob);
+    }
+
+}else{
+	console.log("FileReader API is not supported");
+}
 
 function URLFetchable(url, start, end, opts) {
     if (!opts) {
@@ -67,18 +73,57 @@ URLFetchable.prototype.slice = function(s, l) {
     return new URLFetchable(this.url, ns, ne, this.opts);
 }
 
-//WIP: trying to write a simpler version of fetch()
-URLFetchable.prototype.fetch2 = function(cb){
-	$.ajax({
-		url : this.url,
-		type: 'GET',
-		headers: {Range: "bytes="+this.start+"-"+this.end},
-		processData:false,
-		responseType: 'ArrayBuffer',
-		success: function(data){
-			cb(data);
-		}
-	});
+var seed=0;
+var isSafari = typeof(navigator) !== 'undefined' &&
+    navigator.userAgent.indexOf('Safari') >= 0 &&
+    navigator.userAgent.indexOf('Chrome') < 0 ;
+
+URLFetchable.prototype.fetchAsText = function(callback) {
+    var thisB = this;
+
+    this.getURL().then(function(url) {
+        try {
+            var req = new XMLHttpRequest();
+            var length;
+            if ((isSafari || thisB.opts.salt) && url.indexOf('?') < 0) {
+                url = url + '?salt=' + b64_sha1('' + Date.now() + ',' + (++seed));
+            }
+            req.open('GET', url, true);
+
+            if (thisB.end) {
+                if (thisB.end - thisB.start > 100000000) {
+                    throw 'Monster fetch!';
+                }
+                req.setRequestHeader('Range', 'bytes=' + thisB.start + '-' + thisB.end);
+                length = thisB.end - thisB.start + 1;
+            }
+
+            req.onreadystatechange = function() {
+                if (req.readyState == 4) {
+                    if (req.status == 200 || req.status == 206) {
+                        return callback(req.responseText);
+                    } else {
+                        return callback(null);
+                    }
+                }
+            };
+            if (thisB.opts.credentials) {
+                req.withCredentials = true;
+            }
+            req.send();
+        } catch (e) {
+            return callback(null);
+        }
+    }).catch(function(err) {
+        console.log(err);
+        return callback(null, err);
+    });
+}
+
+URLFetchable.prototype.salted = function() {
+    var o = shallowCopy(this.opts);
+    o.salt = true;
+    return new URLFetchable(this.url, this.start, this.end, o);
 }
 
 URLFetchable.prototype.getURL = function() {
@@ -97,6 +142,7 @@ URLFetchable.prototype.getURL = function() {
 
 URLFetchable.prototype.fetch = function(callback, opts) {
     var thisB = this;
+    console.log("data fetch request "+this.start+" - "+this.end);
 
     opts = opts || {};
     var attempt = opts.attempt || 1;
@@ -121,7 +167,9 @@ URLFetchable.prototype.fetch = function(callback, opts) {
 
             var req = new XMLHttpRequest();
             var length;
-
+            if ((isSafari || thisB.opts.salt) && url.indexOf('?') < 0) {
+                url = url + '?salt=' + b64_sha1('' + Date.now() + ',' + (++seed));
+            }
             req.open('GET', url, true);
             req.overrideMimeType('text/plain; charset=x-user-defined');
             if (thisB.end) {
@@ -170,4 +218,50 @@ URLFetchable.prototype.fetch = function(callback, opts) {
         console.log(err);
         return callback(null, err);
     });
+}
+
+function bstringToBuffer(result) {
+    if (!result) {
+        return null;
+    }
+
+    var ba = new Uint8Array(result.length);
+    for (var i = 0; i < ba.length; ++i) {
+        ba[i] = result.charCodeAt(i);
+    }
+    return ba.buffer;
+}
+
+// Read from Uint8Array
+
+var convertBuffer = new ArrayBuffer(8);
+var ba = new Uint8Array(convertBuffer);
+var fa = new Float32Array(convertBuffer);
+
+function readFloat(buf, offset) {
+    ba[0] = buf[offset];
+    ba[1] = buf[offset+1];
+    ba[2] = buf[offset+2];
+        ba[3] = buf[offset+3];
+    return fa[0];
+}
+
+function readInt64(ba, offset) {
+    return (ba[offset + 7] << 24) | (ba[offset + 6] << 16) | (ba[offset + 5] << 8) | (ba[offset + 4]);
+}
+
+function readInt(ba, offset) {
+    return (ba[offset + 3] << 24) | (ba[offset + 2] << 16) | (ba[offset + 1] << 8) | (ba[offset]);
+}
+
+function readShort(ba, offset) {
+    return (ba[offset + 1] << 8) | (ba[offset]);
+}
+
+function readByte(ba, offset) {
+    return ba[offset];
+}
+
+function readIntBE(ba, offset) {
+    return (ba[offset] << 24) | (ba[offset + 1] << 16) | (ba[offset + 2] << 8) | (ba[offset + 3]);
 }
