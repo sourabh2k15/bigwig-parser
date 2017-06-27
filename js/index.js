@@ -2,25 +2,24 @@ var chrom, low = 0, high = 50000, end, file, remote;
 var bb, bb2;
 var s, debugDiv;
 
-$(document).ready(function(){
+document.addEventListener('DOMContentLoaded', function(){
+	console.log("app loaded");
 	_('low').value = low;
 	_('high').value = high;
 
-	$('#chromids').change(function(){
+	_('chromids').onchange = function(){
+		console.log("chrom: "+this.value);
 		chrom = this.value;
 		var id = bb2.chroms.indexOf(chrom);
-	});
+	}
 
-	$('#query').click(function(){
-		fetch();
-	});
-});
+}, false);
 
 function fetch(){
 	remote = false;
 	var values = [];
 	file = document.getElementById('file').files[0];
-	if(!file){ file = $('#url').val(); remote = true;}
+	if(!file){ file = _('url').value; remote = true;}
 	if(!file) return;
 
 	fetchMine(file, "mytrack", remote);
@@ -48,8 +47,7 @@ function fetchDalliance(file, name, remote){
 		if(b == null) log(e);
 		else{
 			var e = performance.now();
-			
-			log("dalliance's fetch took "+Math.floor(e-s)+" milliSeconds");
+			log("fetch took "+Math.floor(e-s)+" milliSeconds");
 			bb = b;
 			//updateView();
 			if(!chrom) chrom = b.idsToChroms[0];
@@ -58,13 +56,14 @@ function fetchDalliance(file, name, remote){
 }
 
 function query1(){
+	/*
 	_('fetchURL').disabled = true;
 	_('mine').disabled = true;
 	_('dalliance').disabled = true;
-
+	*/
 	debugDiv='debug1';
-	if($('#low').val()) low = $('#low').val();
-	if($('#high').val()) high = $('#high').val();
+	if(_('low').value) low = _('low').value;
+	if(_('high').value) high = _('high').value;
 	log("querying : "+chrom+" : "+low+" - "+high);
 	s = performance.now();
 	bb2.getValues(chrom, low, high, function(data, e){
@@ -73,8 +72,8 @@ function query1(){
 			values = data;
 			console.log(values);
 			log("query took "+Math.floor(performance.now()-s)+" milliSeconds fetched "+values.length+" items");
-			s = performance.now();
-			if(bb2.type=='bigwig') draw(values, "browser1");
+
+			//if(bb2.type=='bigwig') draw(values, "browser1");
 			values = [];
 			_('fetchURL').disabled = false;
 			_('mine').disabled = false;
@@ -85,20 +84,22 @@ function query1(){
 }
 
 function query2(){
+	/*
 	_('fetchURL').disabled = true;
 	_('mine').disabled = true;
 	_('dalliance').disabled = true;
+	*/
 	debugDiv = 'debug2';
-	if($('#low').val()) low = $('#low').val();
-	if($('#high').val()) high = $('#high').val();
+	if(_('low').value) low = _('low').value;
+	if(_('high').value) high = _('high').value;
 	log("querying : "+chrom+" : "+low+" - "+high);
 
 	s = performance.now();
 	bb.readWigData(chrom, low, high, function(d2){
 		values = d2;
 		console.log(values);
-		log("dalliance's query took "+Math.floor(performance.now()-s)+" milliSeconds , fetched "+values.length+" items");
-		if(bb.type=='bigwig') draw(values, "browser2");
+		log("query took "+Math.floor(performance.now()-s)+" milliSeconds , fetched "+values.length+" items");
+		//if(bb.type=='bigwig') draw(values, "browser2");
 
 		values = [];
 		_('fetchURL').disabled = false;
@@ -112,7 +113,7 @@ function updateView(){
 	var html = "<option>select chrom</option>";
 	for(var i=0;i<chroms.length;i++) html += "<option value="+chroms[i]+">"+chroms[i]+"</option>";
 	//console.log(html);
-	$('#chromids').html(html);
+	_('chromids').innerHTML = (html);
 	if(!chrom) chrom = bb2.chroms[0];
 	_('chromids').value = chrom;
 }
@@ -156,7 +157,7 @@ function textdraw(values){
 	for(var i=0;i<values.length;i++){
 		t+="[ "+values[i][0]+","+values[i][1]+","+values[i][2]+"]";
 	}
-	$("#result").html(t);
+	_("result").innerHTML = (t);
 }
 //utilities
 function log(m){
