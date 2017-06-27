@@ -1,5 +1,6 @@
 # bigwig-parser
-A javascript parser for BigWig and BigBed genome annotation files. 
+A javascript parser for BigWig and BigBed genome annotation files. <img src='https://travis-ci.org/sourabh2k15/bigwig-parser.svg?branch=master' />
+
 
 TODO:
 1) Add explanation of the file structures and parsing procedure. 
@@ -13,3 +14,4 @@ Timing stats are shown in side by side divs.
 For BigWig files data is drawn onto a canvas, for BigBed you could open up the console to see the values. 
 
 <img src='http://i.imgur.com/q2uC5mk.png' />
+
