@@ -142,8 +142,6 @@ URLFetchable.prototype.getURL = function() {
 
 URLFetchable.prototype.fetch = function(callback, opts) {
     var thisB = this;
-    console.log("data fetch request "+this.start+" - "+this.end);
-
     opts = opts || {};
     var attempt = opts.attempt || 1;
     var truncatedLength = opts.truncatedLength;
