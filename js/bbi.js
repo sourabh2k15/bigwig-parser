@@ -30,6 +30,7 @@ var BigWig2 = function(f, name, remote, callback){
 	var ba, la, fa, buffer;
 	var bbi = {};
 	var vals = [];
+	var outstanding = 0;
 
 	function init(){
 		//initialize object
@@ -222,131 +223,70 @@ var BigWig2 = function(f, name, remote, callback){
 	}
 
 	function getValues(chrom, start, end, cb){
-		bbi.blocks = [];
 		bbi.query = { chromid : bbi.chroms.indexOf(chrom), start: start, end: end};
+		bbi.cb2 = cb;
+		bbi.blocks = [];
+		vals = [];
+		traverseRTree();
+	}
 
-		getData(bbi.rootOffset, 4 + (32*bbi.Rheader.blockSize),function(){
-			vals = [];
-			bbi.root = getRTreeNode(bbi.rootOffset);
-			walkRTreeNodes(bbi.root,function(){
-				bbi.cb2 = cb;
-				console.log(bbi.blocks);
-				getBlocks();
-			});
+	function traverseRTree(){
+		outstanding = 0;
+		fetchRTreeKids([bbi.rootOffset],1);
+	}
+
+	var fetchRTreeKids = function(offset, level){
+		outstanding += offset.length;
+		var min = offset[0];
+		var maxNodeSize = (4 + bbi.Rheader.blockSize*32);
+		var max = offset[offset.length - 1] + maxNodeSize;
+
+		getData(min, max-min, function(){
+			for(var i=0; i< offset.length; i++){
+				traverseRTreeKids(offset[i], level);
+				--outstanding;
+				if(outstanding == 0) getBlocks();
+			}
 		});
 	}
 
-	function walkRTreeNodes(root, cb){
-			console.log("walk RTree");
-			if(root.isLeaf){
-				overlapsLeaf(root);
-				cb();
+	var traverseRTreeKids = function(offset, level){
+		var node = getRTreeNode(offset);
+		var overlaps = findOverlaps(node);
+		console.log(overlaps.length);
+		if(node.isLeaf){
+			console.log("leaf");
+			for(var j=0; j<overlaps.length; j++){
+				var key = overlaps[j];
+				bbi.blocks.push({offset : node.dataOffset[key], size : node.x.size[key]});
 			}
-			else{ overlapsNonLeaf(root, 0, null, 0,cb); }
-	}
-
-	function overlapsLeaf(node, level){
-		console.log('leaf');
-		var output = [];
-		var overlaps = findOverlap2(node);
-		//console.log(overlaps);
-		if(overlaps.length == 0) console.log("no overlaps");
-		for(var i=0;i<overlaps.length;i++){
-			var key = overlaps[i];
-			bbi.blocks.push({offset : node.dataOffset[key], size : node.x.size[key]});
+			//console.log(bbi.blocks);
+		}else{
+			console.log("index "+level);
+			var recurOffsets = [];
+			for(var j=0; j<overlaps.length; j++){
+				var key = overlaps[j];
+				recurOffsets.push(node.dataOffset[key]);
+			}
+			fetchRTreeKids(recurOffsets, level+1);
 		}
 	}
 
-	/*
-	 The most important piece of code, traverses the R tree.
-	 its a simple tree traversal but the fact that the nodes are fetched async makes it
-	 a bit harder to write.
-
-	 I will try to simplify the approach later and break it down into smaller methods
-	*/
-	// serious callback hell created :( , will clean it up later using promises. For now it works perfectly
-	function overlapsNonLeaf(node, level, overlaps, state, cb){
-		console.log("index ", level);
-		if(state == 0){
-			//visited the node 1st time , fetch children
-			overlaps = findOverlap2(node);
-			fetchChildren(node, overlaps, function(){
-				//console.log(overlaps.length+" children fetched");
-				if(overlaps.length == 0){
-					 console.log("no overlaps");
-					 cb();
-				}
-				else{
-					// if 0th element is leaf then all children are leaves
-					if(node.x.child[overlaps[0]].isLeaf){
-						//leaf level reached
-						for(var i=0;i<overlaps.length;i++){
-							key = overlaps[i];
-							overlapsLeaf(node.x.child[key]);
-						}
-						cb();
-					}
-					else{
-						var key = overlaps.splice(0,1);
-						overlapsNonLeaf(node.x.child[key], (level+1), overlaps, 0, function(){
-							if(overlaps.length == 0) cb();
-							else{
-								// return to parent in state 1, meaning move on to sibling node
-								overlapsNonLeaf(node, level, overlaps, 1, cb);
-							}
-						});
-					}
-				}
-			});
-		}else if(state == 1){
-				if(overlaps.length == 0) cb();
-				else{
-					var key = overlaps.splice(0,1);
-					overlapsNonLeaf(node.x.child[key], (level+1), overlaps, 0, function(){
-						if(overlaps.length == 0) cb();
-						else{
-							overlapsNonLeaf(node, level, overlaps, 1, cb);
-						}
-					});
-				}
-		}
-	}
-
-	function fetchChildren(node, overlaps, cb){
-		//console.log("fetching "+overlaps.length+" children");
-		if(overlaps.length ==0) cb();
-		else{
-			var min = node.dataOffset[overlaps[0]];
-			var max = node.dataOffset[overlaps[overlaps.length-1]];
-			max += (4 + bbi.Rheader.blockSize*32);
-			//console.log(min, max);
-			getData(min, max-min, function(){
-				for(var i = 0;i < overlaps.length; i++){
-					node.x.child[overlaps[i]] = getRTreeNode(node.dataOffset[i]);
-				}
-				cb();
-			});
-		}
-
-		//console.log("overlaps",overlaps);
-	}
-
-	function findOverlap2(node){
+	var findOverlaps = function(node){
+		var children = node.children;
 		var overlaps = [];
-		var chr = bbi.query.chromid;
-		var max = bbi.query.end;
-		var min = bbi.query.start;
+		for(var j=0; j<children; j++){
+			var startChrom = node.chrIdxStart[j];
+			var startBase = node.baseStart[j];
+			var endChrom = node.chrIdxEnd[j];
+			var endBase = node.baseEnd[j];
+			var cnt = node.children;
 
-		for(var i=0;i<node.children;i++){
-			var startChrom = node.chrIdxStart[i];
-			var startBase = node.baseStart[i];
-			var endChrom = node.chrIdxEnd[i];
-			var endBase = node.baseEnd[i];
-
-			if ((startChrom < chr || (startChrom == chr && startBase <= max)) &&
-				(endChrom   > chr || (endChrom == chr && endBase >= min)))
+			if ((startChrom < bbi.query.chromid || (startChrom == bbi.query.chromid && startBase <= bbi.query.end)) &&
+				(endChrom   > bbi.query.chromid || (endChrom == bbi.query.chromid && endBase >= bbi.query.start)))
 			{
-				overlaps.push(i);
+				overlaps.push(j);
+				//bbi.blocks.push({offset : node.dataOffset[j], size : node.x.size[j]});
 			}
 		}
 		return overlaps;

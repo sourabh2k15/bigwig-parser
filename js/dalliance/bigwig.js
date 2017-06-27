@@ -139,6 +139,8 @@ BigWigView.prototype.readWigDataById = function(chr, min, max, callback) {
                     cirFobRecur2(resultBuffer, offset[i] - fr.min(), level);
                     --outstanding;
                     if (outstanding == 0) {
+                        console.log(blocksToFetch);
+                        console.log("finished");
                         thisB.fetchFeatures(filter, blocksToFetch, callback);
                     }
             }
@@ -155,7 +157,7 @@ BigWigView.prototype.readWigDataById = function(chr, min, max, callback) {
         offset += 4;
 
         if (isLeaf != 0) {
-            //console.log("leaf");
+            console.log("leaf");
             for (var i = 0; i < cnt; ++i) {
                 var lo = offset/4;
                 var startChrom = la[lo];
@@ -172,7 +174,7 @@ BigWigView.prototype.readWigDataById = function(chr, min, max, callback) {
                 offset += 32;
             }
         } else {
-            //console.log("index ");
+            console.log("index "+level);
             var recurOffsets = [];
             for (var i = 0; i < cnt; ++i) {
                 var lo = offset/4;

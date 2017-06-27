@@ -48,7 +48,7 @@ function fetchDalliance(file, name, remote){
 		if(b == null) log(e);
 		else{
 			var e = performance.now();
-			log("fetch took "+Math.floor(e-s)+" milliSeconds");
+			log("dalliance's fetch took "+Math.floor(e-s)+" milliSeconds");
 			bb = b;
 			//updateView();
 			if(!chrom) chrom = b.idsToChroms[0];
@@ -96,7 +96,7 @@ function query2(){
 	bb.readWigData(chrom, low, high, function(d2){
 		values = d2;
 		console.log(values);
-		log("query took "+Math.floor(performance.now()-s)+" milliSeconds , fetched "+values.length+" items");
+		log("dalliance's query took "+Math.floor(performance.now()-s)+" milliSeconds , fetched "+values.length+" items");
 		if(bb.type=='bigwig') draw(values, "browser2");
 
 		values = [];
@@ -117,7 +117,6 @@ function updateView(){
 }
 
 function draw(values, id){
-	console.log(values);
 	var max = -1;
 	if(id == 'browser2'){
 		var tmp = [];
@@ -126,7 +125,6 @@ function draw(values, id){
 	}
 
 	for(var i = 0;i < values.length; i++) if(max < values[i][2]) max = values[i][2];
-	console.log(max);
 
 	if(values.length==0) return;
 	var c = document.getElementById(id);
