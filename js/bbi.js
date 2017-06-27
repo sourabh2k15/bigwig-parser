@@ -253,7 +253,7 @@ var BigWig2 = function(f, name, remote, callback){
 	var traverseRTreeKids = function(offset, level){
 		var node = getRTreeNode(offset);
 		var overlaps = findOverlaps(node);
-		console.log(overlaps.length);
+		//console.log(overlaps.length);
 		if(node.isLeaf){
 			console.log("leaf");
 			for(var j=0; j<overlaps.length; j++){
@@ -318,6 +318,8 @@ var BigWig2 = function(f, name, remote, callback){
 	}
 
 	function fetchblocks(){
+		console.log(bbi.blocks);
+		console.log("fetched blocks, now fetching values .....");
 		var totalSize = 0;
 		var base = bbi.blocks[0].offset;
 

@@ -48,6 +48,7 @@ function fetchDalliance(file, name, remote){
 		if(b == null) log(e);
 		else{
 			var e = performance.now();
+			
 			log("dalliance's fetch took "+Math.floor(e-s)+" milliSeconds");
 			bb = b;
 			//updateView();

@@ -140,7 +140,7 @@ BigWigView.prototype.readWigDataById = function(chr, min, max, callback) {
                     --outstanding;
                     if (outstanding == 0) {
                         console.log(blocksToFetch);
-                        console.log("finished");
+                        console.log("fetched blocks, now fetching values .....");
                         thisB.fetchFeatures(filter, blocksToFetch, callback);
                     }
             }
