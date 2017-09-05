@@ -43,3 +43,20 @@ Below are the track configurations and the resulting outputs as compared in Geno
   
   13:32587797 feature is zoomed on, the data matches perfectly though it can be a while before the data appears in the genoverse track
   as it is making more network requests, this needs to be improvised upon but it works perfectly from the output point of view
+  
+  3) BED 
+  
+  note : the below URL has no CORS ( cross origin request support ) so I used this [chrome extension](https://chrome.google.com/webstore/detail/allow-control-allow-origi/nlfbmbojpeacfghkpbjhddihlkkiljbi?hl=en) to test the data from that url 
+  
+  ```
+  chr   : 19,
+  start : 6511775,
+  end   : 6705060,
+  Genoverse.Track.File.BED.extend({
+     url : 'http://www.ensembl.org/info/website/upload/sample_files/example.bed'
+  })
+  
+  ```
+
+![BED-ensembl](http://i.imgur.com/gIRldnZ.png)
+![BED-genoverse](http://i.imgur.com/gIRldnZ.png)
