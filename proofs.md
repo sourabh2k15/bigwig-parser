@@ -59,7 +59,7 @@ Below are the track configurations and the resulting outputs as compared in Geno
   ```
 
 ![BED-ensembl](http://i.imgur.com/gIRldnZ.png)
-![BED-genoverse](http://i.imgur.com/gIRldnZ.png)
+![BED-genoverse](http://i.imgur.com/Mescaav.png)
 
 4) BIGBED 
 
