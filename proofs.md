@@ -1,6 +1,6 @@
 Hello steve, 
 
-These are the track configurations and the resulting outputs as compared in Genoverse and Ensembl :
+Below are the track configurations and the resulting outputs as compared in Genoverse and Ensembl to convince you that the code is working :) 
 
 1) BIGBED :
 
