@@ -63,6 +63,7 @@ Below are the track configurations and the resulting outputs as compared in Geno
 
 4) BIGBED 
 
+note : the below file URL doesn't support CORS so I used this [chrome extension](https://chrome.google.com/webstore/detail/allow-control-allow-origi/nlfbmbojpeacfghkpbjhddihlkkiljbi?hl=en) to bypass that 
 ```
 chr       : 21,
 start     : 33031597,
