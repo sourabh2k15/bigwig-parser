@@ -2,7 +2,7 @@ Hello steve,
 
 Below are the track configurations and the resulting outputs as compared in Genoverse and Ensembl to convince you that the code is working :) 
 
-1) BIGBED :
+1) BIGWIG :
 
 ```
   chr       : 17,
