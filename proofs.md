@@ -60,3 +60,18 @@ Below are the track configurations and the resulting outputs as compared in Geno
 
 ![BED-ensembl](http://i.imgur.com/gIRldnZ.png)
 ![BED-genoverse](http://i.imgur.com/gIRldnZ.png)
+
+4) BIGBED 
+
+```
+chr       : 21,
+start     : 33031597,
+end       : 33041570,
+Genoverse.Track.File.BIGBED.extend({
+  name : 'bigbed-demo',
+  url  : 'http://genome.ucsc.edu/goldenPath/help/examples/bigBedExample.bb',
+})
+```
+![BIGBED-ensembl](http://i.imgur.com/0Ruqju2.png)
+![BIGBED-genoverse](http://i.imgur.com/pI0gg7n.png)
+
